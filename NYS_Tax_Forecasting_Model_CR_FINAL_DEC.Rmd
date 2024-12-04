@@ -1,0 +1,986 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Ryan E. Kelly
+CS 668 - Analytics Capstone
+Prof Krystyn Gutu
+4 December 2024
+#FINAL CODE REVIEW
+
+
+
+Good evening,
+
+This last section of work was dedicated to refining the original models and experimenting with potential optimization through the development of alternative models.  
+
+## Linear Model ##
+
+Optimization for the linear regression model proved to be difficult on the basis that the original model proved to be most accurate. This testing included the following linear regression models:
+
+1.variance inflation factor (VIF) because of the close scoring for CPI and GDP. Ultimately, the removal of any of these attributes worsened the performance of the original model and their inclusion was necessary for capture general trends. 
+
+2. a model using the caret package with support for Ridge regression, but this method of optimization proved to be ineffective  likely due to the small size of our dataset. There was no true worry about over fitting because the data did not heavily fluctuate nor was there enough data to warrant a coefficient shrinking, which is typical to the Ridge-Regression Approach.
+
+3. A model using standard caret (the caret package is a useful tool for optimizing models in R, and is managed by CRAN) hyptertuning which reinforced the parameters of the original model. 
+
+The inclusion of all 4 models (the original included) is to show sufficient effort in attempting to tune the model further.
+
+## RF Model ##
+
+The optimized Random forest model that came with great success. There are only two models to demonstrate, the original and the optimized hypertuned model.  The hypertuned model used the ranger package (also managed by CRAN) in conjunction with caret to find the ideal parameters for the mtry, min.node.size. and splitrule parameters. These parameters are provided upon running the model. This was the most accurate model within a 2.99% error. 
+
+## ETS Model ## 
+
+There was not inherent caret support was this model is based off the forecasting package that employs a different technical methodology than that of the linear regression and random forest models. I mimicked the caret functionality by having the ETS choose from a menu of available parameters. Ultimately, this model reinforced the findings of the original model by selecting the same parameters. 
+
+
+Respectfully,
+
+RK 
+
+
+
+
+# DATASET 1 -  New York State GDP Data
+Source: Federal Reserve Bank (St. Louis)
+https://fred.stlouisfed.org/series/NYNQGSP
+```{r}
+
+library(fredr)
+
+fredr_set_key("0200e442540c7e00b0062bbabaf750dd")
+
+ny_gdp_data <- fredr(series_id = "NYNGSP")
+colnames(ny_gdp_data) <- c("date", "series_id", "gdp_value", "realtime_start", "realtime_end")
+
+ny_gdp_data$year <- as.numeric(format(ny_gdp_data$date, "%Y"))
+ny_gdp_data$gdp_value <- ny_gdp_data$gdp_value / 1e6  # Converts to billions
+ny_gdp_data <- ny_gdp_data[, c("year", "gdp_value")]
+
+str(ny_gdp_data)
+summary(ny_gdp_data)
+
+```
+
+
+```{r}
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A", mar = c(5, 5, 4, 2) + 0.1)
+
+year_range <- paste(min(ny_gdp_data$year), max(ny_gdp_data$year), sep = " - ")
+
+plot(
+  ny_gdp_data$year, ny_gdp_data$gdp_value,
+  type = "b",
+  col = "black",
+  xlab = "Year",
+  ylab = "GDP Value (Billions of Dollars)",
+  main = paste("New York State GDP CY (", year_range, ")", sep = ""),
+  pch = 19,
+  lwd = 1,
+  las = 1,
+  cex.axis = 0.8,
+  cex.lab = 1
+)
+
+# Add grid lines
+grid(nx = NULL, ny = NULL, col = "gray", lty = "dotted")
+
+```
+
+# DATASET 2 -  New York State Unemployment Data
+Source: Federal Reserve Bank (St. Louis)
+https://fred.stlouisfed.org/series/NYNQGSP
+
+```{r}
+library(fredr)
+
+fredr_set_key("0200e442540c7e00b0062bbabaf750dd")
+ny_unemployment_data_raw <- fredr(series_id = "NYUR")
+
+
+
+ny_unemployment_df <- data.frame(
+  year = as.numeric(format(ny_unemployment_data_raw$date, "%Y")),
+  period = format(ny_unemployment_data_raw$date, "%m"),  # month period
+  period_name = format(ny_unemployment_data_raw$date, "%B"),
+  unemployment_rate = ny_unemployment_data_raw$value
+)
+
+ny_unemployment_df <- subset(ny_unemployment_df, period != "13")
+
+```
+
+```{r}
+# Creation of fiscal year variable based on NY fiscal year (April 1 - March 31)
+
+ny_unemployment_df$fiscal_year <- ifelse(ny_unemployment_df$period %in% c("01", "02", "03"),
+                                         ny_unemployment_df$year - 1,
+                                         ny_unemployment_df$year)
+
+# Calendar year averages
+ny_annual_unemployment <- aggregate(unemployment_rate ~ year, data = ny_unemployment_df, FUN = mean)
+colnames(ny_annual_unemployment)[2] <- "unemployment_CY"
+
+# Fiscal year averages
+ny_fiscal_unemployment <- aggregate(unemployment_rate ~ fiscal_year, data = ny_unemployment_df, FUN = mean)
+colnames(ny_fiscal_unemployment)[2] <- "unemployment_FY"
+
+ny_unemployment_data <- merge(ny_annual_unemployment, ny_fiscal_unemployment, 
+                              by.x = "year", by.y = "fiscal_year", all = TRUE)
+```
+
+
+```{r}
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A", mar = c(5, 5, 4, 2) + 0.1)
+
+year_range <- paste(min(ny_unemployment_data$year), max(ny_unemployment_data$year), sep = " - ")
+
+
+plot(
+  ny_unemployment_data$year,
+  ny_unemployment_data$unemployment_FY,
+  type = "o",
+  col = "black",
+  lwd = 1,
+  pch = 19,
+  xaxt = "n",
+  yaxt = "n",
+  ylab = "Average Unemployment Rate (%)",
+  xlab = "Fiscal Year",
+  main = paste("New York State Average Unemployment Rate FY (", year_range, ")", sep = "")
+)
+
+
+axis(1, at = ny_unemployment_data$year, labels = ny_unemployment_data$year, las = 2)
+axis(2, las = 1)
+
+
+grid(nx = length(ny_unemployment_data$year), ny = NULL, col = "lightgray", lty = "dotted")
+
+```
+
+
+
+DATASET #3 - CPI Data - North Eastern US
+Source: US Department of Labor - Bureau of Labor Statistics
+https://www.bls.gov/regions/mid-atlantic/news-release/consumerpriceindex_northeast.htm
+
+https://data.bls.gov/timeseries/CUUR0100SA0?amp%253bdata_tool=XGtable&output_view=data&include_graphs=true
+
+
+```{r}
+library(httr)
+bls_api_key <- "85f2b89f6fd64218a8ef61270b0e8dc1" 
+cpi_series_id <- "CUUR0100SA0" # Northeast US CPI
+
+
+fetch_cpi_data <- function(start_year, end_year, series_id, api_key) {
+  url <- paste0(
+    "https://api.bls.gov/publicAPI/v2/timeseries/data/", series_id,
+    "?registrationkey=", api_key,
+    "&startyear=", start_year, "&endyear=", end_year
+  )
+  
+  response <- GET(url)
+  
+  if (status_code(response) == 200) {
+    result <- content(response, as = "parsed", type = "application/json")$Results$series[[1]]$data
+    if (is.null(result)) stop("No data returned from API.")
+    return(result)
+  } else {
+    stop("API request failed with status code: ", status_code(response))
+  }
+}
+
+# The requests had to be separated to accommodate for size limitations. 
+data_1990_2009 <- fetch_cpi_data(1990, 2009, cpi_series_id, bls_api_key)
+data_2010_2023 <- fetch_cpi_data(2010, 2023, cpi_series_id, bls_api_key)
+
+
+# Extract and clean up each dataset with checks for NULLs and empty fields
+extract_values <- function(data) {
+  years <- sapply(data, function(x) if (!is.null(x$year)) x$year else NA)
+  periods <- sapply(data, function(x) if (!is.null(x$period)) x$period else NA)
+  period_names <- sapply(data, function(x) if (!is.null(x$periodName)) x$periodName else NA)
+  cpi_values <- sapply(data, function(x) if (!is.null(x$value)) x$value else NA)
+  
+  data.frame(
+    year = as.numeric(years),
+    period = periods,
+    period_name = period_names,
+    cpi_index = as.numeric(cpi_values)
+  )
+}
+
+# Apply extraction function
+northeast_cpi_1990_2009 <- extract_values(data_1990_2009)
+northeast_cpi_2010_2023 <- extract_values(data_2010_2023)
+
+# Combination of data frames
+northeast_cpi_df <- rbind(northeast_cpi_1990_2009, northeast_cpi_2010_2023)
+head(northeast_cpi_df)
+tail(northeast_cpi_df)
+
+
+
+```
+
+
+
+
+```{r}
+
+# Aggregate by calendar year
+calendar_year_cpi <- aggregate(cpi_index ~ year, data = northeast_cpi_df, FUN = mean)
+
+# Filter data for NYS fiscal year calculation and check if non-empty
+fiscal_year_data <- subset(northeast_cpi_df, period_name %in% c("April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"))
+if (nrow(fiscal_year_data) > 0) {
+  # Aggregate for NYS Fiscal Year (April 1 - March 31)
+  fiscal_year_cpi <- aggregate(cpi_index ~ year, data = fiscal_year_data, FUN = function(x) mean(x, na.rm = TRUE))
+  
+  # Adjust fiscal year labels to start in the previous year
+  fiscal_year_cpi$year <- fiscal_year_cpi$year - 1
+  
+  # Merge Calendar Year and Fiscal Year data into a single dataframe
+  ne_cpi_data <- merge(calendar_year_cpi, fiscal_year_cpi, by = "year", all = TRUE)
+  colnames(ne_cpi_data) <- c("year", "cpi_calendar_year", "cpi_fiscal_year")
+  
+  head(ne_cpi_data)
+  summary(ne_cpi_data)
+} else {
+  warning("Fiscal year data is empty after subsetting. Check period_name values.")
+}
+
+
+```
+
+
+
+```{r}
+par(las = 1)
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A", mar = c(5, 5, 4, 2) + 0.1)
+cpi_range <- range(ne_cpi_data$cpi_calendar_year, na.rm = TRUE)
+ylim_upper <- cpi_range[2] + 10
+
+plot(
+  ne_cpi_data$year, ne_cpi_data$cpi_calendar_year, type = "o",
+  col = "black", pch = 19, lty = 1, lwd = 1,
+  xlab = "Year", ylab = "CPI Index (Calendar Year)",
+  main = "Northeast Consumer Price Index (CPI) - CY(2010-2023)",
+  ylim = c(cpi_range[1], ylim_upper)
+)
+
+grid(nx = NULL, ny = NULL, col = "gray", lty = "dotted")
+
+
+```
+```{r}
+
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A", mar = c(5, 5, 4, 2) + 0.1)
+
+cpi_range_fy <- range(ne_cpi_data$cpi_fiscal_year, na.rm = TRUE)
+ylim_upper_fy <- cpi_range_fy[2] + 10
+
+plot(
+  ne_cpi_data$year, ne_cpi_data$cpi_fiscal_year, type = "o",
+  col = "black", pch = 19, lty = 1, lwd = 1,
+  xlab = "Fiscal Year", ylab = "CPI Index (Fiscal Year)",
+  main = "Northeast Consumer Price Index (CPI) - FY(2010-2022)",
+  ylim = c(cpi_range_fy[1], ylim_upper_fy)
+)
+
+grid(nx = NULL, ny = NULL, col = "gray", lty = "dotted")
+
+```
+
+# DATASET 4 - New York State Tax Projections
+Source: New York State Department of Finance
+API Call
+https://www.tax.ny.gov/research/stats/statistics/stat_fy_collections.htm
+
+
+```{r}
+library(httr)
+library(jsonlite)
+library(dplyr)
+
+base_url <- "https://data.ny.gov/resource/cpjr-ezcj.json"
+
+# This offset is necessary because the NYS API for tax pulls has a limit of 1000 lines. 
+# The tax data has approximately 1,600 lines. This method is recommended by the NYS data contractor, and it doesn't require an API key!
+
+fetch_data <- function(offset, limit = 1000) {
+  url <- paste0(base_url, "?$limit=", limit, "&$offset=", offset)
+  response <- GET(url)
+  
+  if (http_type(response) != "application/json") {
+    stop("Failed to fetch data: ", status_code(response))
+  }
+  
+  content <- content(response, as = "text", encoding = "UTF-8")
+  data <- fromJSON(content, flatten = TRUE)  # flatten nested data for simplicity
+  
+  if (is.null(data) || length(data) == 0) {
+    return(NULL)  # Return NULL if data is empty
+  }
+  
+  return(as.data.frame(data))
+}
+
+# Initialize variables
+ny_tax_data_raw <- data.frame()  # Renamed to ny_tax_data_raw
+offset <- 0
+limit <- 1000
+
+# Loop to fetch all data
+repeat {
+  data <- fetch_data(offset, limit)
+  
+  # Break if no data was returned
+  if (is.null(data) || nrow(data) == 0) break
+  
+  # Bind the new data to the existing data frame
+  ny_tax_data_raw <- bind_rows(ny_tax_data_raw, data)
+  
+  # Update offset for next iteration
+  offset <- offset + limit
+}
+
+# Check the final data frame
+head(ny_tax_data_raw)  # Show the first few rows
+summary(ny_tax_data_raw)
+
+
+```
+
+
+```{r}
+# Ensure that amount_collected is numeric
+ny_tax_data_raw$amount_collected <- as.numeric(ny_tax_data_raw$amount_collected)
+
+# Aggregate amount_collected by fiscal_year for each specified tax category
+sales_excise_use <- aggregate(amount_collected ~ fiscal_year, 
+                              data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Sales, Excise and Use", ], 
+                              sum, na.rm = TRUE)
+other_taxes_fees <- aggregate(amount_collected ~ fiscal_year, 
+                              data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Other Taxes and Fees", ], 
+                              sum, na.rm = TRUE)
+corporation_business <- aggregate(amount_collected ~ fiscal_year, 
+                                  data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Corporation and Business", ], 
+                                  sum, na.rm = TRUE)
+personal_income <- aggregate(amount_collected ~ fiscal_year, 
+                             data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Personal Income", ], 
+                             sum, na.rm = TRUE)
+property_transfer <- aggregate(amount_collected ~ fiscal_year, 
+                               data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Property Transfer", ], 
+                               sum, na.rm = TRUE)
+total_collected <- aggregate(amount_collected ~ fiscal_year, 
+                             data = ny_tax_data_raw[ny_tax_data_raw$tax_category == "Total", ], 
+                             sum, na.rm = TRUE)
+
+# Merge all totals by fiscal_year
+ny_tax_data <- Reduce(function(x, y) merge(x, y, by = "fiscal_year", all = TRUE), 
+                      list(sales_excise_use, other_taxes_fees, 
+                           corporation_business, personal_income, 
+                           property_transfer, total_collected))
+
+
+colnames(ny_tax_data) <- c("fiscal_year", "sales_excise_use", 
+                           "other_taxes_fees", "corporation_business", 
+                           "personal_income", "property_transfer", 
+                           "total_collected")
+
+print(ny_tax_data)
+
+
+```
+
+```{r}
+# Check for missing totals and calculate them for fiscal years 1995 to 2002
+for (i in 1995:2002) {
+  # Check if total_collected is missing or NA for the given fiscal year
+  if (is.na(ny_tax_data$total_collected[ny_tax_data$fiscal_year == i])) {
+    # Sum across the other categories for this fiscal year
+    ny_tax_data$total_collected[ny_tax_data$fiscal_year == i] <- 
+      with(ny_tax_data[ny_tax_data$fiscal_year == i, ],
+           sales_excise_use + other_taxes_fees + 
+           corporation_business + personal_income + 
+           property_transfer)
+  }
+}
+
+print(ny_tax_data)
+
+
+```
+
+
+
+```{r}
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A", mar = c(5, 5, 4, 2) + 0.1, las = 1)
+
+barplot_values <- barplot(
+  ny_tax_data$total_collected / 1e9,
+  names.arg = ny_tax_data$fiscal_year,
+  col = "lightblue",
+  xlab = "Fiscal Year",
+  ylab = "Total State Collections (in billions USD)",
+  main = "New York State Total Tax Revenues by FY (1995-2024)",
+  las = 2,
+  ylim = c(0, max(ny_tax_data$total_collected / 1e9) * 1.1),
+  cex.names = 0.8        
+)
+
+
+grid(nx = NA, ny = NULL, col = "gray")
+abline(h = seq(20, max(ny_tax_data$total_collected / 1e9), by = 20), col = "gray", lty = "dotted")
+
+
+box()
+
+
+```
+
+##################### STEP 2 - MODEL BUILDING ##########################
+
+
+
+```{r}
+ny_gdp_data
+ny_unemployment_data
+ne_cpi_data
+ny_tax_data
+
+```
+
+```{r}
+# Adding fiscal year column for ease of merging
+ny_gdp_data$fiscal_year <- ny_gdp_data$year
+ny_unemployment_data$fiscal_year <- ny_unemployment_data$year
+ne_cpi_data$fiscal_year <- ne_cpi_data$year
+
+# Merging on fiscal year
+ny_tax_forecast_data <- merge(ny_tax_data, ny_gdp_data[, c("fiscal_year", "gdp_value")], by = "fiscal_year", all.x = TRUE)
+ny_tax_forecast_data <- merge(ny_tax_forecast_data, ny_unemployment_data[, c("fiscal_year", "unemployment_FY")], by = "fiscal_year", all.x = TRUE)
+ny_tax_forecast_data <- merge(ny_tax_forecast_data, ne_cpi_data[, c("fiscal_year", "cpi_fiscal_year")], by = "fiscal_year", all.x = TRUE)
+
+
+colnames(ny_tax_forecast_data) <- c("fiscal_year", "sales_excise_use", "other_taxes_fees", "corporation_business", 
+                                    "personal_income", "property_transfer", "total_collected", "gdp_value", 
+                                    "unemployment", "cpi")
+
+# Impute missing values for historical data - these values were back filled from 1997 - I could have also manually put these in, but for ease of access with the API and the need to keep this consistant, I am using this approach. This should not greatly impact the model in any way. I will revist this next code review. 
+ny_tax_forecast_data$gdp_value[ny_tax_forecast_data$fiscal_year == 1995] <- ny_tax_forecast_data$gdp_value[ny_tax_forecast_data$fiscal_year == 1997]
+ny_tax_forecast_data$gdp_value[ny_tax_forecast_data$fiscal_year == 1996] <- ny_tax_forecast_data$gdp_value[ny_tax_forecast_data$fiscal_year == 1997]
+ny_tax_forecast_data$cpi[ny_tax_forecast_data$fiscal_year == 2023] <- ny_tax_forecast_data$cpi[ny_tax_forecast_data$fiscal_year == 2022]
+
+# Prepare the 2024 test data and handle missing values
+test_data_2024 <- subset(ny_tax_forecast_data, fiscal_year == 2024)
+
+# Forward-fill missing values with 2023 values for 2024 predictions. (Only 1 value is being forward filled for the reason described above. I will revist this next code review)
+test_data_2024$gdp_value[is.na(test_data_2024$gdp_value)] <- ny_tax_forecast_data$gdp_value[ny_tax_forecast_data$fiscal_year == 2023]
+test_data_2024$cpi[is.na(test_data_2024$cpi)] <- ny_tax_forecast_data$cpi[ny_tax_forecast_data$fiscal_year == 2023]
+
+# View the prepared data
+print(head(ny_tax_forecast_data))
+print(test_data_2024)
+
+
+```
+
+##################### MODEL BUILDING ##########################
+
+##################### MODEL ONE - LINEAR REGRESSION ##################### 
+
+
+```{r}
+# Linear Regression Model
+training_data <- subset(ny_tax_forecast_data, fiscal_year < 2024)
+model <- lm(total_collected ~ gdp_value + unemployment + cpi, data = training_data)
+
+# Predict for 2024
+predicted_2024 <- predict(model, newdata = test_data_2024)
+
+# Calculate Evaluation Metrics for Training Data
+training_predictions <- predict(model, newdata = training_data)
+mae <- mean(abs(training_predictions - training_data$total_collected))
+mse <- mean((training_predictions - training_data$total_collected)^2)
+r_squared <- summary(model)$r.squared
+
+# Percent Error for 2024 Prediction
+actual_2024 <- test_data_2024$total_collected
+percent_off <- abs(predicted_2024 - actual_2024) / actual_2024 * 100
+
+# Print Results
+cat("Model One: Linear Regression\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(mae, 2), "\n")
+cat("MSE:", round(mse, 2), "\n")
+cat("R-squared:", round(r_squared, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(predicted_2024, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(percent_off, 2), "%\n")
+
+```
+
+
+##################### MODEL ONE - LINEAR REGRESSION - OPTIMZIATION ATTEMPTS  - ORIGINAL REINFORCED #####################
+
+######  ATTEMPT ONE - VIF ######
+```{r}
+# Linear Regression - VIF Alternative Model
+
+# Check multicollinearity using VIF
+library(car)
+vif_model <- vif(model)
+cat("VIF for each variable in the original model:\n")
+print(vif_model)
+
+# Alternative: Remove 'cpi' due to high VIF and refit the model
+alternative_model <- lm(total_collected ~ gdp_value + unemployment, data = training_data)
+
+# Evaluate the alternative model
+alternative_training_predictions <- predict(alternative_model, newdata = training_data)
+alternative_mae <- mean(abs(alternative_training_predictions - training_data$total_collected))
+alternative_mse <- mean((alternative_training_predictions - training_data$total_collected)^2)
+alternative_r_squared <- summary(alternative_model)$r.squared
+
+# Check VIF again for the alternative model
+vif_alternative_model <- vif(alternative_model)
+cat("\nVIF for each variable in the alternative model:\n")
+print(vif_alternative_model)
+
+# Predict and Calculate Percent Error for 2024
+alternative_predicted_2024 <- predict(alternative_model, newdata = test_data_2024)
+alternative_percent_off <- abs(alternative_predicted_2024 - actual_2024) / actual_2024 * 100
+
+cat("Alternative Linear Regression\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(alternative_mae, 2), "\n")
+cat("MSE:", round(alternative_mse, 2), "\n")
+cat("R-squared:", round(alternative_r_squared, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(alternative_predicted_2024, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(alternative_percent_off, 2), "%\n")
+
+```
+######  ATTEMPT TWO - Caret Ridge ######
+```{r}
+# Linear Regression - Caret Optimization (Ridge Regression)
+
+library(caret)  # For automated optimization within R. This library is updated by CRAN. 
+
+# Define train control and tuning grid
+train_control <- trainControl(method = "cv", number = 10)  # 10-folds for cross-validation
+ridge_grid <- expand.grid(alpha = 0, lambda = seq(0.001, 1, by = 0.01))  # Alpha = 0 for ridge regression
+
+# Train ridge regression using caret
+ridge_model <- train(
+  total_collected ~ gdp_value + unemployment + cpi,
+  data = training_data,
+  method = "glmnet",
+  trControl = train_control,
+  tuneGrid = ridge_grid
+)
+
+# Best hyperparameters
+cat("\nCaret Optimization: Ridge Regression\n")
+cat("Best Parameters:\n")
+print(ridge_model$bestTune)
+
+# Evaluate Ridge Regression on training data
+ridge_training_predictions <- predict(ridge_model, newdata = training_data)
+ridge_mae <- mean(abs(ridge_training_predictions - training_data$total_collected))
+ridge_mse <- mean((ridge_training_predictions - training_data$total_collected)^2)
+
+# Predict for 2024 and calculate percent error
+ridge_predicted_2024 <- predict(ridge_model, newdata = test_data_2024)
+ridge_percent_off <- abs(ridge_predicted_2024 - actual_2024) / actual_2024 * 100
+
+
+cat("\nCaret Optimized: Ridge Regression\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(ridge_mae, 2), "\n")
+cat("MSE:", round(ridge_mse, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(ridge_predicted_2024, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(ridge_percent_off, 2), "%\n")
+
+```
+
+######  ATTEMPT THREE - Caret Standard ######
+```{r}
+library(caret)
+
+# Define train control (cross-validation)
+train_control <- trainControl(method = "cv", number = 5)
+
+linear_model_caret <- train(
+  total_collected ~ gdp_value + unemployment + cpi,
+  data = training_data,
+  method = "lm",
+  trControl = train_control
+)
+
+# Summarize results
+print(linear_model_caret)
+
+# Predict for 2024
+predicted_2024_caret <- predict(linear_model_caret, newdata = test_data_2024)
+percent_off_caret <- abs(predicted_2024_caret - actual_2024) / actual_2024 * 100
+cat("Percent Off:", round(percent_off_caret, 2), "%\n")
+
+```
+
+```{r}
+# Focus on the last 3 years and the 2024 prediction
+focus_years <- c(2021, 2022, 2023, 2024)
+focus_actual <- ny_tax_data$total_collected[ny_tax_data$fiscal_year %in% focus_years]
+
+# Extract predictions for all Linear Regression models
+focus_linear <- c(focus_actual[1:3], predicted_2024)                     # Original Linear Regression
+focus_linear_alternative <- c(focus_actual[1:3], alternative_predicted_2024) # Alternative (VIF-based model)
+focus_linear_ridge <- c(focus_actual[1:3], ridge_predicted_2024)         # Ridge Regression
+focus_linear_caret <- c(focus_actual[1:3], predicted_2024_caret)         # Caret Optimized
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A")
+
+plot(focus_years, focus_actual / 1e9, type = "l", col = "black", lwd = 2,
+     ylim = c(min(focus_actual) * 0.95 / 1e9, max(focus_actual) * 1.05 / 1e9), 
+     xlab = "Year", ylab = "Tax Revenue (Billion $)", 
+     main = "Linear Regression: Actual vs. All Models", xaxt = "n", yaxt = "n")
+grid()
+
+
+lines(focus_years, focus_linear / 1e9, col = "red", lwd = 2, lty = 2)                    # Original Model
+lines(focus_years, focus_linear_alternative / 1e9, col = "blue", lwd = 2, lty = 3)       # Alternative Model (VIF)
+lines(focus_years, focus_linear_ridge / 1e9, col = "green", lwd = 2, lty = 4)            # Ridge Regression
+lines(focus_years, focus_linear_caret / 1e9, col = "purple", lwd = 2, lty = 5)           # Caret Optimized
+
+axis(1, at = focus_years, labels = focus_years)
+axis(2, at = seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                 ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), 
+     labels = paste0(seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                         ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), "B"), 
+     las = 1)
+
+legend("topright", legend = c("Actual", "Original Model", "Alternative (VIF)", 
+                              "Ridge Regression", "Caret Optimized"), 
+       col = c("black", "red", "blue", "green", "purple"), 
+       lty = c(1, 2, 3, 4, 5), lwd = 2, cex = 0.7)
+
+```
+
+
+
+##################### MODEL TWO - RANDOM FOREST #####################
+
+```{r}
+
+library(randomForest)
+
+# Random Forest Model
+training_data_rf <- subset(ny_tax_forecast_data, fiscal_year < 2024)
+set.seed(123)
+rf_model <- randomForest(total_collected ~ gdp_value + unemployment + cpi, 
+                         data = training_data_rf, 
+                         ntree = 500, 
+                         mtry = 2, 
+                         importance = TRUE)
+
+# Predict for 2024
+predicted_2024_rf <- predict(rf_model, newdata = test_data_2024)
+
+# Calculate Evaluation Metrics for Training Data
+training_predictions_rf <- predict(rf_model, newdata = training_data_rf)
+mae_rf <- mean(abs(training_predictions_rf - training_data_rf$total_collected))
+mse_rf <- mean((training_predictions_rf - training_data_rf$total_collected)^2)
+
+# Percent Error for 2024 Prediction
+actual_2024 <- test_data_2024$total_collected
+percent_off_rf <- abs(predicted_2024_rf - actual_2024) / actual_2024 * 100
+
+
+cat("Model Two: Random Forest Regression\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(mae_rf, 2), "\n")
+cat("MSE:", round(mse_rf, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(predicted_2024_rf, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(percent_off_rf, 2), "%\n")
+
+# Variable Importance
+cat("\nVariable Importance:\n")
+print(importance(rf_model))
+
+
+```
+
+
+##################### MODEL TWO - RANDOM FOREST - OPTIMIZATION ATTEMPT - PERFORMANCE IMPROVED  #####################
+
+
+
+```{r}
+library(caret)
+
+# Define train control with 5-fold cross-validation
+train_control <- trainControl(method = "cv", number = 5)
+
+# Initialize variables for multiple runs
+num_runs <- 10
+results <- data.frame(MAE = numeric(num_runs), MSE = numeric(num_runs), Percent_Off = numeric(num_runs))
+best_params <- list()
+
+# Perform multiple runs
+for (i in 1:num_runs) {
+  set.seed(i)  # Ensure reproducibility for each run
+
+  # Train the Random Forest model using caret with ranger
+  caret_rf_model <- train(
+    total_collected ~ gdp_value + unemployment + cpi,
+    data = training_data_rf,
+    method = "ranger",  # Faster Random Forest implementation
+    trControl = train_control,
+    tuneGrid = expand.grid(
+      mtry = c(1, 2, 3), 
+      splitrule = "variance", 
+      min.node.size = c(1, 5, 10)
+    )
+  )
+
+  # Predict for 2024
+  predicted_2024_rf_optimized <- predict(caret_rf_model, newdata = test_data_2024)
+  percent_off_rf_optimized <- abs(predicted_2024_rf_optimized - actual_2024) / actual_2024 * 100
+
+  # Calculate training metrics
+  caret_training_predictions <- predict(caret_rf_model, newdata = training_data_rf)
+  mae_rf_optimized <- mean(abs(caret_training_predictions - training_data_rf$total_collected))
+  mse_rf_optimized <- mean((caret_training_predictions - training_data_rf$total_collected)^2)
+
+  # Store results and best parameters
+  results[i, ] <- c(mae_rf_optimized, mse_rf_optimized, percent_off_rf_optimized)
+  best_params[[i]] <- caret_rf_model$bestTune
+}
+
+# Summarize results across runs
+mean_mae <- mean(results$MAE)
+mean_mse <- mean(results$MSE)
+mean_percent_off <- mean(results$Percent_Off)
+sd_percent_off <- sd(results$Percent_Off)
+
+
+cat("Caret Optimized Random Forest Regression\n")
+cat("Training Metrics (Averages Across Runs):\n")
+cat("Mean MAE:", round(mean_mae, 2), "\n")
+cat("Mean MSE:", round(mean_mse, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Mean Percent Off Across Runs:", round(mean_percent_off, 2), "%\n")
+cat("Standard Deviation of Percent Off Across Runs:", round(sd_percent_off, 2), "%\n")
+
+# Print Best Parameters Selected in Each Run
+cat("\nBest Parameters Selected Across Runs:\n")
+print(do.call(rbind, best_params))
+
+```
+
+
+```{r}
+# Focus on the last 3 years and the 2024 prediction
+focus_years <- c(2021, 2022, 2023, 2024)
+focus_actual <- ny_tax_data$total_collected[ny_tax_data$fiscal_year %in% focus_years]
+
+# Extract predictions for Random Forest models
+focus_rf <- c(focus_actual[1:3], predicted_2024_rf)                     # Original Random Forest
+focus_rf_optimized <- c(focus_actual[1:3], predicted_2024_rf_optimized) # Optimized Random Forest
+
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A")
+
+plot(focus_years, focus_actual / 1e9, type = "l", col = "black", lwd = 2,
+     ylim = c(min(focus_actual) * 0.95 / 1e9, max(focus_actual) * 1.05 / 1e9), 
+     xlab = "Year", ylab = "Tax Revenue (Billion $)", 
+     main = "Random Forest: Actual vs. Original & Optimized", xaxt = "n", yaxt = "n")
+grid()
+
+lines(focus_years, focus_rf / 1e9, col = "red", lwd = 2, lty = 2)         # Original Model
+lines(focus_years, focus_rf_optimized / 1e9, col = "blue", lwd = 2, lty = 3) # Optimized Model
+
+axis(1, at = focus_years, labels = focus_years)
+axis(2, at = seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                 ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), 
+     labels = paste0(seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                         ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), "B"), 
+     las = 1)
+
+legend("topright", legend = c("Actual", "Original Model", "Optimized Model"), 
+       col = c("black", "red", "blue"), lty = c(1, 2, 3), lwd = 2, cex = 0.7)
+
+```
+
+
+
+
+
+
+
+##################### MODEL THREE - EXPONENTIAL SMOOTHING MODEL OPTIMIZATION - ORIGINAL MODEL REINFORCED) #####################
+```{r}
+# Load necessary library
+library(forecast)
+
+# Define Time Series
+tax_revenue_ts <- ts(ny_tax_data$total_collected[ny_tax_data$fiscal_year < 2024], 
+                     start = 1995, frequency = 1)
+
+# Fit ETS Model
+ets_model <- ets(tax_revenue_ts)
+
+# Training Metrics
+training_predictions_ets <- fitted(ets_model)
+mae_ets <- mean(abs(training_predictions_ets - tax_revenue_ts))
+mse_ets <- mean((training_predictions_ets - tax_revenue_ts)^2)
+
+# Forecast for 2024
+forecast_2024_ets <- forecast(ets_model, h = 1)
+predicted_2024_ets <- as.numeric(forecast_2024_ets$mean)
+actual_2024 <- ny_tax_data$total_collected[ny_tax_data$fiscal_year == 2024]
+percent_off_ets <- abs(predicted_2024_ets - actual_2024) / actual_2024 * 100
+
+# Print Results
+cat("Model Three: Regular ETS\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(mae_ets, 2), "\n")
+cat("MSE:", round(mse_ets, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(predicted_2024_ets, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(percent_off_ets, 2), "%\n")
+
+```
+
+##################### MODEL 3 - EXPONENTIAL SMOOTHING MODEL-  #####################
+```{r}
+# Define all possible ETS configurations
+ets_configs <- expand.grid(
+  error = c("A", "M"),
+  trend = c("N", "A", "M"),
+  seasonal = c("N", "A", "M"),
+  stringsAsFactors = FALSE
+)
+
+# Initialize variables to store best results
+best_mae <- Inf
+best_model <- NULL
+results <- data.frame()
+
+# Iterate through configurations
+for (i in 1:nrow(ets_configs)) {
+  config <- ets_configs[i, ]
+  
+  # Try to fit ETS model with current configuration
+  tryCatch({
+    model <- ets(
+      tax_revenue_ts,
+      model = paste(config$error, config$trend, config$seasonal, sep = "")
+    )
+    
+    # Calculate training metrics
+    training_predictions <- fitted(model)
+    mae <- mean(abs(training_predictions - tax_revenue_ts))
+    mse <- mean((training_predictions - tax_revenue_ts)^2)
+    
+    # Update the best model if MAE improves
+    if (mae < best_mae) {
+      best_mae <- mae
+      best_model <- model
+    }
+    
+    # Store results for each configuration
+    results <- rbind(results, cbind(config, MAE = mae, MSE = mse))
+  }, error = function(e) {
+    # Handle models that fail to fit
+    NULL
+  })
+}
+
+# Final optimized ETS model
+training_predictions_ets_optimized <- fitted(best_model)
+mae_ets_optimized <- mean(abs(training_predictions_ets_optimized - tax_revenue_ts))
+mse_ets_optimized <- mean((training_predictions_ets_optimized - tax_revenue_ts)^2)
+
+# Forecast for 2024
+forecast_2024_ets_optimized <- forecast(best_model, h = 1)
+predicted_2024_ets_optimized <- as.numeric(forecast_2024_ets_optimized$mean)
+percent_off_ets_optimized <- abs(predicted_2024_ets_optimized - actual_2024) / actual_2024 * 100
+
+
+cat("\nModel Three: Optimized ETS\n")
+cat("Training Metrics:\n")
+cat("MAE:", round(mae_ets_optimized, 2), "\n")
+cat("MSE:", round(mse_ets_optimized, 2), "\n")
+cat("\n2024 Prediction:\n")
+cat("Predicted 2024 Tax Revenue:", round(predicted_2024_ets_optimized, 2), "\n")
+cat("Actual 2024 Tax Revenue:", actual_2024, "\n")
+cat("Percent Off:", round(percent_off_ets_optimized, 2), "%\n")
+
+# Print Best Configuration
+cat("\nBest ETS Configuration:\n")
+print(best_model)
+
+```
+
+```{r}
+
+# Focus on the last 3 years and the 2024 prediction
+focus_years <- c(2021, 2022, 2023, 2024)
+focus_actual <- ny_tax_data$total_collected[ny_tax_data$fiscal_year %in% focus_years]
+
+# Extract predictions for Original and Optimized ETS models
+focus_ets <- c(focus_actual[1:3], predicted_2024_ets)
+focus_ets_optimized <- c(focus_actual[1:3], predicted_2024_ets_optimized)
+
+
+windowsFonts(A = windowsFont("Times New Roman"))
+par(family = "A")
+
+plot(focus_years, focus_actual / 1e9, type = "l", col = "black", lwd = 2,
+     ylim = c(min(focus_actual) * 0.95 / 1e9, max(focus_actual) * 1.05 / 1e9), 
+     xlab = "Year", ylab = "Tax Revenue (Billion $)", 
+     main = "ETS: Actual vs. Original & Optimized", xaxt = "n", yaxt = "n")
+grid()
+
+
+lines(focus_years, focus_ets / 1e9, col = "red", lwd = 2, lty = 2)           # Original Model
+lines(focus_years, focus_ets_optimized / 1e9, col = "blue", lwd = 2, lty = 3)  # Optimized Model
+
+
+axis(1, at = focus_years, labels = focus_years)
+axis(2, at = seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                 ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), 
+     labels = paste0(seq(floor(min(focus_actual) / 1e9 * 0.95), 
+                         ceiling(max(focus_actual) / 1e9 * 1.05), by = 5), "B"), 
+     las = 1)
+
+
+legend("topright", legend = c("Actual", "Original ETS", "Optimized ETS"), 
+       col = c("black", "red", "blue"), lty = c(1, 2, 3), lwd = 2, cex = 0.7)
+
+
+```
+
+
